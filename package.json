@@ -1,0 +1,1 @@
+{"name":"r3vcore-webinar-console","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test","dev":"node dev-server.js"},"engines":{"node":">=22"}}

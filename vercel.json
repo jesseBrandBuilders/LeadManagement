@@ -1,0 +1,1 @@
+{"outputDirectory":"public","functions":{"api/*.js":{"maxDuration":120}},"rewrites":[{"source":"/o/:token","destination":"/api/tracking?kind=open&token=:token"},{"source":"/c/:token","destination":"/api/tracking?kind=click&token=:token"},{"source":"/u/:token","destination":"/api/tracking?kind=unsubscribe&token=:token"}]}
