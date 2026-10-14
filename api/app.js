@@ -2,6 +2,7 @@ import {settings,uuid,validateCampaign,normalizeLeads,mime,emailValid} from '../
 import {DB,authorize} from '../lib/db.js';
 import {accessToken} from '../lib/gmail.js';
 import {runWorker,deliver} from '../lib/worker.js';
+import {randomUUID} from 'node:crypto';
 export function makeApp(c,{db=new DB(c),auth=authorize,tokenProvider=accessToken,worker=runWorker}={}){
  return async(req,res)=>{
   res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json');
@@ -28,15 +29,21 @@ export function makeApp(c,{db=new DB(c),auth=authorize,tokenProvider=accessToken
     const changed=await db.patch('contacts','email=eq.'+encodeURIComponent(email),{unsubscribed_at:new Date().toISOString()});return reply(200,{updated:changed.length});
    }
    if(action==='create'){
-    const data=validateCampaign(body);if(body.followup_from&&!uuid(body.followup_from))throw new Error('Invalid follow-up campaign');
-    const rows=await db.insert('campaigns',{...data,followup_from:body.followup_from||null});return reply(200,rows[0]);
+    const newId=randomUUID();const proposed={...body,registration_url:body.registration_url?.trim()||c.app+'/register/'+newId};
+    const data=validateCampaign(proposed);if(body.followup_from&&!uuid(body.followup_from))throw new Error('Invalid follow-up campaign');
+    const rows=await db.insert('campaigns',{id:newId,...data,followup_from:body.followup_from||null});return reply(200,rows[0]);
    }
    const id=body.id||url.searchParams.get('id');if(!uuid(id))throw new Error('Valid campaign ID required');
    const campaigns=await db.get('campaigns','select=*&id=eq.'+id);const campaign=campaigns[0];if(!campaign)return reply(404,{error:'Campaign not found'});
-   if(action==='campaign')return reply(200,{campaign,...await db.rpc('campaign_report',{p_id:id})});
-   if(action==='save')return reply(200,await db.rpc('save_campaign',{p_id:id,p_version:body.version,p_data:validateCampaign(body)}));
+   if(action==='campaign')return reply(200,{campaign,registration_page_url:c.app+'/register/'+id,...await db.rpc('campaign_report',{p_id:id})});
+   if(action==='save')return reply(200,await db.rpc('save_campaign',{p_id:id,p_version:body.version,p_data:validateCampaign({...body,registration_url:body.registration_url?.trim()||c.app+'/register/'+id})}));
+   if(action==='registration_toggle'){
+    if(typeof body.enabled!=='boolean')throw new Error('Choose whether registration is open');
+    await db.patch('campaigns','id=eq.'+id,{registration_open:body.enabled,...(!body.enabled&&campaign.status==='sending'?{status:'paused'}:{})});return reply(200,{ok:true});
+   }
    if(action==='start'){
     if(!c.enabled)throw new Error('Sending is disabled in server settings');validateCampaign(campaign);
+    if(campaign.registration_url===c.app+'/register/'+id&&!campaign.registration_open)throw new Error('Open the built-in registration page before sending');
     return reply(200,await db.rpc('start_campaign',{p_id:id}));
    }
    if(action==='pause'){
@@ -49,6 +56,7 @@ export function makeApp(c,{db=new DB(c),auth=authorize,tokenProvider=accessToken
    }
    if(action==='test'){
     if(!c.enabled)throw new Error('Sending is disabled in server settings');if(campaign.status!=='draft')throw new Error('Tests are available on drafts');validateCampaign(campaign);
+    if(campaign.registration_url===c.app+'/register/'+id&&!campaign.registration_open)throw new Error('Open the built-in registration page before testing');
     const token=await tokenProvider(c);const owner=await db.rpc('acquire_worker');if(!owner)return reply(409,{error:'A sender is already running. Try the test again shortly.'});
     try{
      const attempts=await db.all('recipients','select=id&attempted_at=gte.'+encodeURIComponent(new Date(Date.now()-86400000).toISOString())+'&order=id.asc');if(attempts.length>=c.cap)throw new Error('Daily send cap reached');
