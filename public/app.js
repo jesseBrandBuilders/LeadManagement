@@ -69,7 +69,69 @@ function editorView(){const c=state.campaign,disabled=c.status!=='draft';return 
 function formValues(){const c=state.campaign;if(c.status!=='draft')return c;return {...c,...Object.fromEntries(new FormData($('#campaign-form')).entries())};}
 function preview(c){const merge=t=>String(t||'').replaceAll('{{first_name}}','Alex').replaceAll('{{last_name}}','Reed');return `<div class="mail"><div class="mail-header"><b>Jesse</b> &lt;jesse@r3vcore.com&gt;<br><b>To:</b> Alex Reed<br><b>Subject:</b> ${esc(merge(c.subject)||'Your email subject')}</div><div class="mail-body"><p>Hi Alex,</p>${c.body?merge(c.body).split(/\n\s*\n/).map(p=>`<p>${esc(p).replaceAll('\n','<br>')}</p>`).join(''):'<p style="color:#a0aeab">Your message will appear here as you write. A clear invitation begins with a reason to join.</p>'}<h3>${esc(c.title||'Your webinar title')}</h3><p>${esc(c.webinar_when||'Your date, time & timezone')}</p><span class="mail-button">Save your seat ↗</span><p>Hope you can join us,<br>Jesse<br>${esc(c.company_name||'R3VCORE')}</p><div class="mail-footer">${esc(c.contact_reason||'Why this person is receiving your invitation')}<br>${esc(c.company_name||'R3VCORE')} · ${esc(c.postal_address||'Your company postal address')}<br><u>Unsubscribe</u></div></div></div>`;}
 function bindEditor(){$('#email-preview').innerHTML=preview(state.campaign);$('#campaign-form').addEventListener('input',()=>$('#email-preview').innerHTML=preview(formValues()));$('#campaign-form').addEventListener('submit',e=>e.preventDefault());}
-async function saveDraft(show=true){if(!$('#campaign-form').reportValidity())throw new Error('Complete the required campaign details');const c=formValues();const fields=['name','list_id','subject','title','webinar_when','body','registration_url','company_name','postal_address','contact_reason'];if(c.id&&fields.every(k=>(c[k]??'')===(state.campaign[k]??''))){if(show)toast('Draft is already saved.');return state.campaign;}const saved=await api(c.id?'save':'create',c);state.campaign=saved;state.data=await api('dashboard');state.report=null;render();if(show)toast('Draft saved. Send a self-test of this version before launch.');return saved;}
+async function saveDraft(async function saveDraft(show = true) {
+  const form = $('#campaign-form');
+
+  // Other tabs use the already-saved campaign.
+  if (!form) {
+    if (state.campaign?.id) {
+      return state.campaign;
+    }
+
+    throw new Error('Open the Invitation tab and save your draft first.');
+  }
+
+  if (!form.reportValidity()) {
+    throw new Error('Complete the required campaign details');
+  }
+
+  const draft = {
+    ...state.campaign,
+    ...Object.fromEntries(new FormData(form).entries())
+  };
+
+  const fields = [
+    'name',
+    'list_id',
+    'subject',
+    'title',
+    'webinar_when',
+    'body',
+    'registration_url',
+    'company_name',
+    'postal_address',
+    'contact_reason'
+  ];
+
+  const unchanged =
+    draft.id &&
+    fields.every(
+      key =>
+        (draft[key] ?? '') ===
+        (state.campaign[key] ?? '')
+    );
+
+  if (unchanged) {
+    if (show) toast('Draft is already saved.');
+    return state.campaign;
+  }
+
+  const saved = await api(
+    draft.id ? 'save' : 'create',
+    draft
+  );
+
+  state.campaign = saved;
+  state.data = await api('dashboard');
+  state.report = null;
+  render();
+
+  if (show) {
+    toast('Draft saved. Send a self-test of this version before launch.');
+  }
+
+  return saved;
+});return saved;}
 function resultsView(){const r=state.report||{stats:{},recipients:[]},s=r.stats,c=state.campaign;const progress=s.total?Math.round((s.total-(s.queued||0))/s.total*100):0;return `<div class="stats">${stat('Accepted by Gmail',s.accepted||0,'Handoff confirmed; not delivery',true)}${stat('Open signals',s.open_signals||0,'Unique recipients with an image load')}${stat('Click signals',s.click_signals||0,'Unique recipients with a link request')}${stat('Registered',s.registered||0,'Unique webinar registrations')}</div><div class="panel"><div class="queue-bar"><div style="flex:1"><h3>${c.status==='sending'?'The invitation is on its way.':c.status==='completed'?'This queue is complete.':c.status==='paused'?'Sending is paused.':'Your queue will appear after launch.'}</h3><p style="margin:6px 0;font-size:12px">${s.queued||0} queued · ${s.uncertain||0} uncertain · ${s.failed||0} rejected</p><div class="progress"><div style="width:${progress}%"></div></div></div><div class="actions"><button class="secondary" data-refresh>Refresh</button>${c.status==='sending'?'<button class="secondary" data-run-worker>Run batch</button>':''}<button class="secondary" data-registration>↑ Import registrations</button><button class="secondary" data-export>↓ Export results</button></div></div></div>${s.uncertain?'<div class="notice">An uncertain send may already be in Gmail Sent Mail. Review it before requeueing. The app will not automatically retry.</div>':''}<div class="panel"><div class="panel-head"><div><h2>Recipient activity</h2><p>Test emails are labeled separately. Open/click signals can include automated activity.</p></div></div><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Status</th><th>Opens</th><th>Clicks</th><th>Registered</th><th></th></tr></thead><tbody>${r.recipients.length?r.recipients.map(x=>`<tr><td><strong>${esc(x.first_name+' '+x.last_name)}${x.is_test?' · SELF-TEST':''}</strong><small>${esc(x.email)}</small>${x.error?`<small title="${esc(x.error)}">${esc(x.error.slice(0,90))}</small>`:''}</td><td>${badge(x.status)}</td><td>${x.opens}</td><td>${x.clicks}</td><td>${x.registered_at?'✓ '+date(x.registered_at):'—'}</td><td>${['uncertain','failed'].includes(x.status)?`<button class="row-action" data-resolve="${x.id}">Review</button>`:''}</td></tr>`).join(''):'<tr><td colspan="6" style="text-align:center;padding:45px">No recipients yet. Send a self-test, then start your invitation.</td></tr>'}</tbody></table></div></div>`;}
 async function refreshCampaign(){if(!state.campaign?.id)return;const r=await api('campaign',{id:state.campaign.id});state.report=r;state.campaign=r.campaign;state.data=await api('dashboard');render();}
 async function launchModal(){
